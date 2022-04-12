@@ -427,7 +427,7 @@ const InteractionServices = (function (window, _) {
     if(!isActionIntervalPaused){
       isActionIntervalPaused=true;
   
-      if(interactionMode == mode_action){
+      //if(interactionMode == mode_action){
           
         var settings = {
           "url": api_url + "/api/Interaction/Interaction_dequeue?session_id="+localStorage.getItem("interaction_session")+"&content_type="+content_type,
@@ -448,9 +448,9 @@ const InteractionServices = (function (window, _) {
             callback(response);  
             isActionIntervalPaused=false;
         });
-      }else{
-        isActionIntervalPaused=false;
-      }
+      // }else{
+      //   isActionIntervalPaused=false;
+      // }
     }
   }
 
