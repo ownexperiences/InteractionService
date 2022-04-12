@@ -10,12 +10,9 @@ if ("serviceWorker" in navigator) {
 $(document).ready(function(){    
   if(localStorage.getItem("logged_in_user") == null)
     window.location.href = "index.html";
-  // if (localStorage.getItem('access_token') == null )
-  //   document.querySelector(".blur-section").style.display = "flex";
-  // else{
-  //   GetCurrentSpotifyUser();
-  //    document.querySelector(".blur-section").style.display = "none";
-  // }
+
+    InteractionServices.Action_QuestionCallback = (response)=>{InteractionServices.TextToSpeech(response.result.content_value)}
+    InteractionServices.Action_StatementCallback = (response)=>{InteractionServices.TextToSpeech(response.result.content_value)}
 });
 
 $(".tabToRecord").on("mousedown",function(){

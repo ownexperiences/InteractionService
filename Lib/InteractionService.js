@@ -12,6 +12,12 @@ const InteractionServices = (function (window, _) {
   InteractionServices.TenantName = "";
   InteractionServices.UserId = "";
 
+  //this function will be called once an action has been generated based on current user analysis and experience.
+  InteractionServices.Action_QuestionCallback = function(){};
+  InteractionServices.Action_StatementCallback = function(){};  
+
+  InteractionServices.isOwnUIUsed=false;
+
   InteractionServices.init = async function() {
     return new Promise((resolve, reject) => {
       var settings = {
@@ -41,17 +47,18 @@ const InteractionServices = (function (window, _) {
             "Content-Type": "application/json",
             "Authorization":"Bearer "+ Token
           },"error": function (xhr, ajaxOptions, thrownError) {
-            alert("error occurred while trying to log you in");
             reject({ success: false, message: "Something went wrong in the process to get user detail" });
           }
         }
 
-        $.ajax(settings2).done(function (resp) {
-          console.log(resp)
+        $.ajax(settings2).done(function (resp) {          
           localStorage.setItem("logged_in_user", InteractionServices.UserId);              
           localStorage.setItem("user_recurring",resp.result.recurring_user);
           localStorage.setItem("user_basalBpm",resp.result.basal_bpm);
           localStorage.setItem("user_userProfile",resp.result.user_profile);
+          if(resp.result.recurring_user){
+            interactionMode = mode_calibration;
+          }
           resolve({ success: true });
         });
   
@@ -62,12 +69,13 @@ const InteractionServices = (function (window, _) {
   //------- global variables
 
   let hrData = new Array(200).fill(10)
-  let RealtimeHeartRate =0;
-  var latitude = "";
-  var longitude = "";
-  var currentSpeed=0;
-  var mediaRecorder;
-  var uncertaintyDetected=0;
+  
+  //real time hear rate value should be fille either with BLE sensor or manually.
+  let RealtimeHeartRate = 0;
+  let mode_calibration = 'user_calibration',mode_action='action',mode_diagnostics='diagnostic';
+  let interactionMode = mode_diagnostics;
+  let isActionIntervalPaused=false;
+
   InteractionServices.isRecording=false;
   InteractionServices.isTalking=false;
   InteractionServices.isUploading=false;
@@ -77,9 +85,6 @@ const InteractionServices = (function (window, _) {
   //webkitURL is deprecated but nevertheless
   URL = window.URL || window.webkitURL;
 
-  var gumStream; 						//stream from getUserMedia()
-  var rec; 							//Recorder.js object
-  var input; 							//MediaStreamAudioSourceNode we'll be recording
   var IsVoiceActivated =false;
   var VoiceActivationTimeout;
 
@@ -94,20 +99,21 @@ const InteractionServices = (function (window, _) {
     {
         //smart:true, 
         indexes:["hi","hey","hello","I hate this song","I love this song","i love this","i hate this"],
-        action:function(i){ // var i returns the index of the recognized command in the previous array
-          debugger;
+        action:function(i){ // var i returns the index of the recognized command in the previous array          
           if(i <= 2){
             IsVoiceActivated=true;
             clearInterval(VoiceActivationTimeout);
             //artyom.say("I can hear you now !");
             
-            $(".tabToRecord").hide();
+            if(InteractionServices.isOwnUIUsed)
+              $(".tabToRecord").hide();
 
             InteractionServices.startRecording();          
 
             VoiceActivationTimeout = setTimeout(() => {
               IsVoiceActivated=false;
-              $(".tabToRecord").show();  
+              if(InteractionServices.isOwnUIUsed)
+                $(".tabToRecord").show();  
 
               //artyom.say("you didn't say anything.");
               InteractionServices.stopRecording();
@@ -117,7 +123,8 @@ const InteractionServices = (function (window, _) {
           }else{
             if(IsVoiceActivated){
               IsVoiceActivated=false;
-              $(".tabToRecord").show();  
+              if(InteractionServices.isOwnUIUsed)
+                $(".tabToRecord").show();  
               
               clearInterval(VoiceActivationTimeout);            
               InteractionServices.stopRecording();
@@ -130,7 +137,7 @@ const InteractionServices = (function (window, _) {
 
   artyom.addCommands(myGroup); 
 
-  InteractionServices.TextToSpeach = (Text) => {
+  InteractionServices.TextToSpeech = (Text) => {
     artyom.say(Text,{
       onStart:function(){
         InteractionServices.onPlaying();
@@ -152,30 +159,35 @@ const InteractionServices = (function (window, _) {
             debug:true, // Show everything in the console
             speed:1, // talk normally
             voice: ['Google US English', 'Alex'],
-        }).then(function(){
-            console.log("Ready to work !");
-            $("#Passive_mode").show();
+        }).then(function(){            
+            if(InteractionServices.isOwnUIUsed)
+              $("#Passive_mode").show();
         });
     },250);
   }
 
   InteractionServices.onPlaying = () => {
     InteractionServices.isTalking=true;
-    $(".tabToRecord").hide();
-    $(".audioWrapper .loader").removeClass("idle").removeClass("listening");
+    if(InteractionServices.isOwnUIUsed){
+      $(".tabToRecord").hide();
+      $(".audioWrapper .loader").removeClass("idle").removeClass("listening");
+    }
     InteractionServices.isUploading=false;
   }
 
   InteractionServices.onStop = () => {
     InteractionServices.isTalking=false;
-    $(".tabToRecord").show();
-    $(".audioWrapper .loader").addClass("idle").removeClass("listening");
+    if(InteractionServices.isOwnUIUsed){
+      $(".tabToRecord").show();
+      $(".audioWrapper .loader").addClass("idle").removeClass("listening");
+    }
 
     if(PassiveModeOn){
       navigator.permissions.query(
         { name: 'microphone' }
         ).then(function(permissionStatus){
-          $("#Passive_mode").show();
+          if(InteractionServices.isOwnUIUsed)
+            $("#Passive_mode").show();
           startContinuousArtyom();
         }
       );
@@ -197,8 +209,7 @@ const InteractionServices = (function (window, _) {
     char.oncharacteristicvaluechanged = props.onChange
     char.startNotifications();
 
-    PlayCarl();
-
+    InteractionServices.PlayCarl();
 
     return char
   }   
@@ -206,14 +217,14 @@ const InteractionServices = (function (window, _) {
   InteractionServices.printHeartRate = (event) => {
     RealtimeHeartRate = event.target.value.getInt8(1)
 
-    //check if hearRate triggered the passive mode
-    
-    const prev = hrData[hrData.length - 1]
-    hrData[hrData.length] = RealtimeHeartRate
-    hrData = hrData.slice(-200)
-    let arrow = ''
-    if (RealtimeHeartRate !== prev) arrow = RealtimeHeartRate > prev ? '⬆' : '⬇'
-    document.getElementById("hr-rate").innerHTML = `<img src="./images/heart.png" width="16"> ${RealtimeHeartRate} ${arrow}`;
+    if(InteractionServices.isOwnUIUsed){
+      const prev = hrData[hrData.length - 1]
+      hrData[hrData.length] = RealtimeHeartRate
+      hrData = hrData.slice(-200)
+      let arrow = ''
+      if (RealtimeHeartRate !== prev) arrow = RealtimeHeartRate > prev ? '⬆' : '⬇'
+      document.getElementById("hr-rate").innerHTML = `<img src="./images/heart.png" width="16"> ${RealtimeHeartRate} ${arrow}`;
+    }    
   }
 
   const onDisconnected = (event) => {
@@ -228,9 +239,11 @@ const InteractionServices = (function (window, _) {
   InteractionServices.startRecording = () => {
     InteractionServices.isRecording=true;
     recorder.start().then(() => {
-      $(".tabToRecord").css("opacity","0.3");
-      console.log("---- recording started");
-      $(".audioWrapper .loader").removeClass("idle").addClass("listening");
+      if(InteractionServices.isOwnUIUsed){
+        $(".tabToRecord").css("opacity","0.3");
+        console.log("---- recording started");
+        $(".audioWrapper .loader").removeClass("idle").addClass("listening");
+      }
     }).catch((e) => {
       console.error(e);
     });
@@ -238,9 +251,11 @@ const InteractionServices = (function (window, _) {
 
   InteractionServices.stopRecording = (sendToCloud=true) => {
     InteractionServices.isRecording=false;
-    $(".tabToRecord").css("opacity","1");
+    if(InteractionServices.isOwnUIUsed)
+      $(".tabToRecord").css("opacity","1");
     recorder.stop().getMp3().then(([buffer, blob]) => {
-      $(".audioWrapper .loader").removeClass("listening").addClass("idle");
+      if(InteractionServices.isOwnUIUsed)
+        $(".audioWrapper .loader").removeClass("listening").addClass("idle");
       if(sendToCloud)
         SendTheRecordToCloud(blob);
     }).catch((e) => {
@@ -262,10 +277,11 @@ const InteractionServices = (function (window, _) {
     var recurringUser = localStorage.getItem("user_recurring");
 
     payloadArray.push({"name":"RecurringUser","value": recurringUser});
-    payloadArray.push({"name":"spotify_playlist","value": localStorage.getItem("spotify_playlistid")});
-    payloadArray.push({"name":"spotify_user","value": localStorage.getItem("spotify_userid")});
-    payloadArray.push({"name":"spotify_top10songs","value": localStorage.getItem("spotify_top10songs") ? JSON.stringify(localStorage.getItem("spotify_top10songs").split(',')) : localStorage.getItem("spotify_top10songs")});
+    payloadArray.push({"name":"spotify_playlist","value": ""});
+    payloadArray.push({"name":"spotify_user","value": ""});
+    payloadArray.push({"name":"spotify_top10songs","value": ""});
     payloadArray.push({"name":"spotify_currentPlayingUri","value": ""});  
+    payloadArray.push({"name":"mode","value": interactionMode});     
 
     form.append("JsonPayload",JSON.stringify(payloadArray));
 
@@ -279,30 +295,42 @@ const InteractionServices = (function (window, _) {
       "data": form,
       "dataType":"json",
       "beforeSend":function(){
-        $(".tabToRecord").hide();
+        if(InteractionServices.isOwnUIUsed)
+          $(".tabToRecord").hide();
       },"error":function(data){      
-        InteractionServices.TextToSpeach("I didn't hear that can you repeat");
-        $(".tabToRecord").show();
+        InteractionServices.TextToSpeech("I didn't hear that can you repeat");
+        if(InteractionServices.isOwnUIUsed)
+          $(".tabToRecord").show();
       }
     };
-    
-    $.ajax(settings).done(function (response) {    
-      
-      if(response.result.stage >= 13){
-        // Start listening. You can call this here, or attach this call to an event, button, etc.
-        console.log("---- listening started");
+
+    $.ajax(settings).done(function (response) {
+      InteractionServices.isUploading=false;
+  
+      if(interactionMode != mode_action)
+        
+        if(response.result.statement.length > 0)
+        InteractionServices.TextToSpeech(response.result.statement);       
+          
+        if(InteractionServices.isOwnUIUsed)
+          $(".tabToRecord").show();
+          
+       if(interactionMode == mode_diagnostics && response.result.stage == response.result.last_stage){       
+         interactionMode = mode_action;
+         recurringUser = true;
+         PassiveModeOn=true;         
+       }else if(interactionMode == mode_calibration && response.result.stage == response.result.last_stage){      
+        interactionMode = mode_action;
+        recurringUser=true;
         PassiveModeOn=true;
-      }
-      if(!response.result.statement){
-        InteractionServices.TextToSpeach("I didn't hear that can you repeat");
-        $(".tabToRecord").show();
-      }else{
-        InteractionServices.TextToSpeach(response.result.statement); 
+      }else{        
+        CheckActionGenerated(0,InteractionServices.Action_QuestionCallback);
+        CheckActionGenerated(1,InteractionServices.Action_StatementCallback);
       }
     });
   }
 
-  const PlayCarl = () => {
+  InteractionServices.PlayCarl = () => {
 
     var Token = localStorage.getItem('token');
 
@@ -318,27 +346,31 @@ const InteractionServices = (function (window, _) {
         "UserID": localStorage.getItem("logged_in_user")
       }),
       "beforeSend" : function(){
-        $("#loading").show();          
+        if(InteractionServices.isOwnUIUsed)
+          $("#loading").show();          
       },
       "error": function (xhr, ajaxOptions, thrownError) {
-        $("#loading").hide();
+        if(InteractionServices.isOwnUIUsed)
+          $("#loading").hide();
       }
     };
     
     $.ajax(settings).done(function (response) {
-      $("#loading").hide();
-      $(".wrapper").show();
+      if(InteractionServices.isOwnUIUsed){
+        $("#loading").hide();
+        $(".wrapper").show();
+      }
       
-      if(response.success){
-        console.log(response);
+      if(response.success){        
         localStorage.setItem("interaction_session",response.result.id);
-
-        InteractionServices.TextToSpeach("Hello, My Name Is Carl");
+        InteractionServices.TextToSpeech("Hello, My Name Is Carl");
       }
     });
 
-    $(".section1").hide();
-    $(".section2").show();
+    if(InteractionServices.isOwnUIUsed){
+      $(".section1").hide();
+      $(".section2").show();
+    }
 
   }
 
@@ -385,5 +417,42 @@ const InteractionServices = (function (window, _) {
       StopWatch_tens = 0;
     }
   }
+
+  setInterval(() => {  
+    CheckActionGenerated(0,InteractionServices.Action_QuestionCallback);
+    CheckActionGenerated(1,InteractionServices.Action_StatementCallback);
+  }, 10000);
+
+  const CheckActionGenerated = (content_type,callback) => {
+    if(!isActionIntervalPaused){
+      isActionIntervalPaused=true;
+  
+      if(interactionMode == mode_action){
+          
+        var settings = {
+          "url": api_url + "/api/Interaction/Interaction_dequeue?session_id="+localStorage.getItem("interaction_session")+"&content_type="+content_type,
+          "method": "GET",
+          "timeout": 0,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "beforeSend" : function(){
+          },
+          "error": function (xhr, ajaxOptions, thrownError) {
+            isActionIntervalPaused=false;
+          }
+        };
+        
+        $.ajax(settings).done(function (response) {
+          if(response.result != null)
+            callback(response);  
+            isActionIntervalPaused=false;
+        });
+      }else{
+        isActionIntervalPaused=false;
+      }
+    }
+  }
+
   return InteractionServices;
 }(window));
