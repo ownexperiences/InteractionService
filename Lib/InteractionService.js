@@ -11,10 +11,13 @@ const InteractionServices = (function (window, _) {
   InteractionServices.ApiSecret = "";
   InteractionServices.TenantName = "";
   InteractionServices.UserId = "";
+  //identify if the session should be auto closed after getting the actions generated.
+  InteractionServices.IsContinuesSession = true;
 
   //this function will be called once an action has been generated based on current user analysis and experience.
-  InteractionServices.Action_QuestionCallback = function(){};
-  InteractionServices.Action_StatementCallback = function(){};  
+  InteractionServices.Interaction_QuestionCallback = function(data){};
+  InteractionServices.Interaction_StatementCallback = function(data){};  
+  InteractionServices.Action_Callback = function(data){}; 
 
   InteractionServices.isOwnUIUsed=false;
 
@@ -81,6 +84,7 @@ const InteractionServices = (function (window, _) {
   InteractionServices.isUploading=false;
   var isTesting=false;
   var PassiveModeOn=false;
+  var SessionEnded=false;
 
   //webkitURL is deprecated but nevertheless
   URL = window.URL || window.webkitURL;
@@ -318,14 +322,37 @@ const InteractionServices = (function (window, _) {
        if(interactionMode == mode_diagnostics && response.result.stage == response.result.last_stage){       
          interactionMode = mode_action;
          recurringUser = true;
-         PassiveModeOn=true;         
+         if(InteractionServices.IsContinuesSession)
+            PassiveModeOn=true;
+          else{
+
+            //check the count of generated actions.
+            $.get(api_url + "/api/Interaction/Interaction_queue_count?session_id="+localStorage.getItem("interaction_session")+"&content_type=4", function( data ) {
+              for (let index = 0; index <= data; index++) {                
+                CheckContentGenerated(4,InteractionServices.Action_Callback);
+              }
+              SessionEnded=true;
+            });
+
+          }
        }else if(interactionMode == mode_calibration && response.result.stage == response.result.last_stage){      
         interactionMode = mode_action;
         recurringUser=true;
-        PassiveModeOn=true;
+        if(InteractionServices.IsContinuesSession)
+            PassiveModeOn=true;
+        else{
+          //check the count of generated actions.
+          $.get(api_url + "/api/Interaction/Interaction_queue_count?session_id="+localStorage.getItem("interaction_session")+"&content_type=4", function( data ) {
+            for (let index = 0; index <= data; index++) {                
+              CheckContentGenerated(4,InteractionServices.Action_Callback);
+            }
+            SessionEnded=true;
+          });
+        }
+           
       }else{        
-        CheckActionGenerated(0,InteractionServices.Action_QuestionCallback);
-        CheckActionGenerated(1,InteractionServices.Action_StatementCallback);
+        CheckContentGenerated(0,InteractionServices.Interaction_QuestionCallback);
+        CheckContentGenerated(1,InteractionServices.Interaction_StatementCallback);        
       }
     });
   }
@@ -418,12 +445,13 @@ const InteractionServices = (function (window, _) {
     }
   }
 
-  setInterval(() => {  
-    CheckActionGenerated(0,InteractionServices.Action_QuestionCallback);
-    CheckActionGenerated(1,InteractionServices.Action_StatementCallback);
+  var ActionsInterval = setInterval(() => {  
+    CheckContentGenerated(0,InteractionServices.Interaction_QuestionCallback);
+    CheckContentGenerated(1,InteractionServices.Interaction_StatementCallback);
+    CheckContentGenerated(4,InteractionServices.Action_Callback);
   }, 10000);
 
-  const CheckActionGenerated = (content_type,callback) => {
+  const CheckContentGenerated = (content_type,callback) => {
     if(!isActionIntervalPaused){
       isActionIntervalPaused=true;
   
